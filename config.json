@@ -1,0 +1,9 @@
+{
+  "GitHub Token":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "GitPakageContentList":["metadata.xml","Resources","Topologies"],
+  "temp_zip_file" : "c:\\Tmp",
+  "Prev_Package_name" : "Prev",
+  "organization_name": "OrgName",
+  "Repository_name":"repName",
+  "GitHub_Link": "https://git.xxxx.com/"
+}
