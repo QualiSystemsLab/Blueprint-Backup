@@ -12,24 +12,19 @@ from collections import namedtuple
 import json
 from cloudshell.core.logger.qs_logger import get_qs_logger
 from cloudshell.helpers.scripts import cloudshell_scripts_helpers as helpers
+from cloudshell.workflow.orchestration.sandbox import Sandbox
 
 class BluePrintBackupPackage:
     def __init__(self):
         self.cwd = os.getcwd()
         self.config_file = 'C:\ProgramData\QualiSystems\QBlueprintsBackup\config.json'
         self.configs = json.loads(open(self.config_file).read())
-
-        self.reservation_id = helpers.get_reservation_context_details().id
-        self.api = helpers.get_api_session()
-        self.reservation_details = self.api.GetReservationDetails(self.reservation_id)
-        self.environmentName = self.reservation_details.ReservationDescription.Topologies[0]
-        self.userName = helpers.get_reservation_context_details().owner_user
-        self.userPass = helpers.get_reservation_context_details().owner_password
+        self.sandbox = Sandbox()
 
         self.FileDescription = namedtuple('FileDescription', 'path contents executable')
 
         self.logger = get_qs_logger(log_file_prefix="CloudShell Sandbox Backup",
-                           log_group=self.reservation_id,
+                           log_group=self.sandbox.id,
                            log_category='BluePrintBackup')
 
 
@@ -135,17 +130,17 @@ class BluePrintBackupPackage:
         """
 
         self.logger.info("Start Exporting Blueprint")
-        self.api.WriteMessageToReservationOutput(self.reservation_id, "Start Exporting blueprint")
+        self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id, "Start Exporting blueprint")
 
         try:
             self.commit_comment = os.environ['comment']
 
         except Exception as e:
-            self.api.WriteMessageToReservationOutput(self.reservation_id,"Missing comment for commit")
+            self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,"Missing comment for commit")
             self.logger.info("Missing comment for commit")
             return
 
-        self.commit_message = self.commit_comment + " commited by owner: " + self.userName
+        self.commit_message = self.commit_comment + " commited by owner: " + self.sandbox.reservationContextDetails.owner_user
 
         ip = helpers.get_connectivity_context_details().server_address
         domain = helpers.get_reservation_context_details().domain
@@ -156,7 +151,7 @@ class BluePrintBackupPackage:
         if not os.path.isdir(temp_zip_path):
             os.makedirs(temp_zip_path)
 
-        self.zip_package_name = self.environmentName + '.zip'
+        self.zip_package_name = self.sandbox.reservationContextDetails.environment_name + '.zip'
 
         self.fullZipfilePath = temp_zip_path + '\\' + self.zip_package_name
         GitHub_Token = self.configs["GitHub Token"]
@@ -165,10 +160,11 @@ class BluePrintBackupPackage:
         try:
             self.logger.info("Export the package")
 
-            qac = QualiAPIClient(ip, '9000', self.userName,self.userPass, domain)
+            qac = QualiAPIClient(ip, '9000', self.sandbox.reservationContextDetails.owner_user
+                                 ,self.sandbox.reservationContextDetails.owner_password, domain)
 
-            qac.download_environment_zip(self.environmentName, self.fullZipfilePath)
-            UnzipFolderName = temp_zip_path + '\\' + self.environmentName
+            qac.download_environment_zip(self.sandbox.reservationContextDetails.environment_name, self.fullZipfilePath)
+            UnzipFolderName = temp_zip_path + '\\' + self.sandbox.reservationContextDetails.environment_name
 
             ## Unzip the pakage
             if not os.path.isdir(UnzipFolderName):
@@ -210,7 +206,7 @@ class BluePrintBackupPackage:
                     repo = org.get_repo(self.configs["Repository_name"])
                 except Exception as e:
 
-                    self.api.WriteMessageToReservationOutput(self.reservation_id,
+                    self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                                          "Error getting git: {0}".format(str(e)))
                     self.logger.error("Error getting git {0}".format(str(e)))
                     raise e
@@ -221,7 +217,7 @@ class BluePrintBackupPackage:
 
                 Prev_file_contents = repo.get_file_contents(self.zip_package_name)
 
-                self.api.WriteMessageToReservationOutput(self.reservation_id,
+                self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                                          "This is not the first commit for this blueprint")
                 self.logger.info("This is not the first commit for this blueprint")
 
@@ -243,12 +239,12 @@ class BluePrintBackupPackage:
                 if os.listdir(UnzipFolderName) and os.listdir(prev_unzip):
                     self.logger.info("Compering with prev commit for diff")
                     if self.are_dir_trees_equal(prev_unzip, UnzipFolderName):
-                        self.api.WriteMessageToReservationOutput(self.reservation_id,
+                        self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                             "There is no diff from the prev commit")
                         self.logger.info("There is no diff from the prev commit - Not uploading the new commit!")
 
                     else:
-                        self.api.WriteMessageToReservationOutput(self.reservation_id,
+                        self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                         "There is a diff from the prev commit")
                         self.logger.info("There is a diff from the prev commit")
                         self.build_list_and_commit(repo,is_new_blueprint=False)
@@ -263,7 +259,7 @@ class BluePrintBackupPackage:
             except Exception as e:
                 self.logger.info("fail to download {0}".format(str(e)))
                 if e.status == 404:
-                    self.api.WriteMessageToReservationOutput(self.reservation_id,
+                    self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                         "This is the first commit for this blueprint")
                     self.logger.info("This is the first commit for this blueprint {0}".format(str(e)))
 
@@ -272,7 +268,7 @@ class BluePrintBackupPackage:
                             self.build_list_and_commit(repo,is_new_blueprint=True)
                             is_uploaded = True
                     except Exception as e:
-                        self.api.WriteMessageToReservationOutput(self.reservation_id,
+                        self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                                                  "Error trying to build list and commit blueprint")
                         self.logger.error("Error trying to build list and commit blueprint {0}".format(str(e)))
 
@@ -284,10 +280,10 @@ class BluePrintBackupPackage:
 
             try:
                 self.logger.info("Export and commit to Github completed")
-                self.api.WriteMessageToReservationOutput(self.reservation_id,
+                self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                                          "Export and commit to Github completed ")
                 if is_uploaded:
-                    self.api.WriteMessageToReservationOutput(self.reservation_id,DownloadLink)
+                    self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,DownloadLink)
 
                 self.logger.info("delete tmp files")
 
@@ -299,7 +295,7 @@ class BluePrintBackupPackage:
                 self.logger.error("Error delete tmp files {0}".format(str(e)))
 
         except Exception as e:
-            self.api.WriteMessageToReservationOutput(self.reservation_id,
+            self.sandbox.automation_api.WriteMessageToReservationOutput(self.sandbox.id,
                                                      "Failed to export and commit {0}".format(str(e)))
             self.logger.error("Error - fail to extport and commit {0}".format(str(e)))
             raise e
